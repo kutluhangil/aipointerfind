@@ -39,6 +39,7 @@ import {
   Info,
   Ruler,
   Compass,
+  Loader,
   Play,
   Pause,
   SkipForward,
@@ -256,6 +257,68 @@ export default function App() {
   const [newPinLabel, setNewPinLabel] = useState('');
   const [newPinColor, setNewPinColor] = useState('#EF4444');
   const [selectedPinForDetail, setSelectedPinForDetail] = useState<{ id: string; lat: number; lng: number; label: string; color: string } | null>(null);
+  const [pinAddress, setPinAddress] = useState<string | null>(null);
+  const [isGeocoding, setIsGeocoding] = useState(false);
+
+  // --- Tour Mode State ---
+  const [isTourActive, setIsTourActive] = useState(false);
+  const [tourType, setTourType] = useState<'london' | 'custom'>('london');
+  const [currentTourIndex, setCurrentTourIndex] = useState(0);
+  const [isTourPaused, setIsTourPaused] = useState(false);
+  const [tourProgress, setTourProgress] = useState(0);
+
+  useEffect(() => {
+    if (!selectedPinForDetail) {
+      setPinAddress(null);
+      setIsGeocoding(false);
+      return;
+    }
+
+    setPinAddress(null);
+    setIsGeocoding(true);
+
+    // Attempt to use Google Maps Geocoder if loaded
+    if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps && (window as any).google.maps.Geocoder) {
+      const geocoder = new (window as any).google.maps.Geocoder();
+      geocoder.geocode(
+        { location: { lat: selectedPinForDetail.lat, lng: selectedPinForDetail.lng } },
+        (results: any, status: any) => {
+          setIsGeocoding(false);
+          if (status === 'OK' && results && results[0]) {
+            setPinAddress(results[0].formatted_address);
+            addLog('info', `📌 Geocoded address: "${results[0].formatted_address}"`);
+          } else {
+            setPinAddress('Nearest street address not available');
+            console.error('Geocoder failed with status:', status);
+          }
+        }
+      );
+    } else {
+      // Fallback reverse geocoding via standard OpenStreetMap Nominatim API
+      const url = `https://nominatim.openstreetmap.org/reverse?lat=${selectedPinForDetail.lat}&lon=${selectedPinForDetail.lng}&format=json`;
+      fetch(url, {
+        headers: {
+          'Accept-Language': 'en',
+          'User-Agent': 'LondonLandmarksTourGuideApp/1.0'
+        }
+      })
+        .then(res => res.json())
+        .then(data => {
+          setIsGeocoding(false);
+          if (data && data.display_name) {
+            setPinAddress(data.display_name);
+            addLog('info', `📌 OS Geocoded address: "${data.display_name}"`);
+          } else {
+            setPinAddress('Nearest street address not available');
+          }
+        })
+        .catch(err => {
+          setIsGeocoding(false);
+          setPinAddress('Nearest street address not available');
+          console.error('OSM Geocoder failed:', err);
+        });
+    }
+  }, [selectedPinForDetail]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -315,6 +378,14 @@ export default function App() {
           if (data.favoriteLocations) setFavoriteLocations(data.favoriteLocations);
           if (data.markers) setMarkers(data.markers);
           if (data.customPins) setCustomPins(data.customPins);
+          
+          if (data.savedTourActive) {
+            setIsTourActive(data.savedTourActive);
+            if (data.savedTourType) setTourType(data.savedTourType);
+            if (data.savedTourIndex !== undefined) setCurrentTourIndex(data.savedTourIndex);
+            if (data.savedTourPaused !== undefined) setIsTourPaused(data.savedTourPaused);
+            addLog('info', `🔄 Restored active tour state: ${data.savedTourType === 'london' ? 'London Landmarks' : 'Saved Favorites'} (Item ${data.savedTourIndex + 1})`);
+          }
         }
       } else {
         setFavorites([]);
@@ -337,6 +408,18 @@ export default function App() {
        }, { merge: true });
     }
   }, [favorites, favoriteLocations, markers, customPins, currentUser]);
+
+  // Sync Tour Mode State to Firestore automatically so it can be resumed later
+  useEffect(() => {
+    if (currentUser) {
+       setDoc(doc(db, 'users', currentUser.uid), {
+         savedTourActive: isTourActive,
+         savedTourType: tourType,
+         savedTourIndex: currentTourIndex,
+         savedTourPaused: isTourPaused
+       }, { merge: true });
+    }
+  }, [isTourActive, tourType, currentTourIndex, isTourPaused, currentUser]);
 
   const handleDismissWelcome = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -389,13 +472,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('showWaveform', showWaveform ? 'true' : 'false');
   }, [showWaveform]);
-
-  // --- Tour Mode State ---
-  const [isTourActive, setIsTourActive] = useState(false);
-  const [tourType, setTourType] = useState<'london' | 'custom'>('london');
-  const [currentTourIndex, setCurrentTourIndex] = useState(0);
-  const [isTourPaused, setIsTourPaused] = useState(false);
-  const [tourProgress, setTourProgress] = useState(0);
 
   // Default London Landmarks Tour
   const LONDON_TOUR_ITEMS = [
@@ -505,6 +581,14 @@ export default function App() {
   // Handle map panning and logs when the active tour item changes
   useEffect(() => {
     if (!isTourActive || tourItems.length === 0) return;
+    
+    // Ensure index is valid and within bounds
+    const safeIndex = currentTourIndex >= tourItems.length ? 0 : currentTourIndex;
+    if (safeIndex !== currentTourIndex) {
+      setCurrentTourIndex(safeIndex);
+      return;
+    }
+
     const item = tourItems[currentTourIndex];
     if (!item) return;
 
@@ -518,7 +602,7 @@ export default function App() {
       setMapZoom(item.zoom || 15);
     }
     addLog('info', `🎯 Tour Panning to: ${item.name}`);
-  }, [currentTourIndex, isTourActive, tourType]); // Reset or update when index/active/type changes
+  }, [currentTourIndex, isTourActive, tourType, tourItems.length]); // Reset or update when index/active/type/length changes
 
   const startTour = (type: 'london' | 'custom' = 'london') => {
     setTourType(type);
@@ -3441,7 +3525,21 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
                       </button>
                     </div>
 
-                    <div className="p-3 bg-black/5 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5 flex flex-col gap-2 text-xs">
+                    <div className="p-3 bg-black/5 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5 flex flex-col gap-2.5 text-xs">
+                      {isGeocoding ? (
+                        <div className="flex items-center gap-2 text-teal-600 dark:text-teal-400 py-1.5 font-medium">
+                          <Loader className="animate-spin text-teal-500" size={14} />
+                          <span>Finding street address...</span>
+                        </div>
+                      ) : pinAddress ? (
+                        <div className="flex flex-col gap-1 py-1 border-b border-black/5 dark:border-white/5 pb-2">
+                          <span className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wider">Address / Nearest Landmark</span>
+                          <span className="text-gray-700 dark:text-gray-200 font-medium leading-relaxed flex items-start gap-1.5">
+                            <MapPin size={14} className="text-teal-500 shrink-0 mt-0.5" />
+                            <span className="break-words">{pinAddress}</span>
+                          </span>
+                        </div>
+                      ) : null}
                       <div className="flex justify-between items-center">
                         <span className="text-gray-400 font-medium">Latitude</span>
                         <span className="font-mono font-medium text-gray-700 dark:text-gray-300">{selectedPinForDetail.lat.toFixed(6)}</span>
@@ -3570,8 +3668,14 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
 
                     {/* Controls Bar */}
                     <div className="flex items-center justify-between border-t border-black/5 dark:border-white/5 pt-3">
-                      <div className="text-[10px] text-gray-400 font-semibold font-mono">
-                        {isTourPaused ? 'PAUSED' : 'AUTO-CYCLING'}
+                      <div className="text-[10px] text-gray-400 font-semibold font-mono flex items-center gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full ${isTourPaused ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`} />
+                        <span>{isTourPaused ? 'PAUSED' : 'AUTO-CYCLING'}</span>
+                        {currentUser && (
+                          <span className="text-[9px] text-gray-400/70 font-normal ml-1 flex items-center gap-0.5">
+                            • cloud synced
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2">
