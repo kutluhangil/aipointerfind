@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { APIProvider, Map, AdvancedMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 
-const API_KEY =
+export const API_KEY =
   process.env.GOOGLE_MAPS_PLATFORM_KEY ||
   (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
   (globalThis as any).GOOGLE_MAPS_PLATFORM_KEY ||
@@ -22,6 +22,9 @@ interface GMPMapProps {
   onMapClick?: (coords: { lat: number, lng: number }) => void;
   customPins?: { id: string; lat: number; lng: number; label: string; color: string }[];
   onPinClick?: (pin: { id: string; lat: number; lng: number; label: string; color: string }) => void;
+  isTourActive?: boolean;
+  isTourPaused?: boolean;
+  showSmartItinerary?: boolean;
 }
 
 function PlaceSearch({ query, mapType, mapZoom }: { query: string, mapType: string, mapZoom: number | null }) {
@@ -90,14 +93,90 @@ function RouteDisplay({ origin, destination }: { origin: string; destination: st
   return null;
 }
 
-function MapController({ mapCenter, mapZoom }: { mapCenter: {lat: number, lng: number} | null, mapZoom: number | null | undefined }) {
+function SmartItineraryRoute({ pins }: { pins: { lat: number; lng: number }[] }) {
+  const map = useMap();
+  const routesLib = useMapsLibrary('routes');
+  const directionsRendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
+
+  useEffect(() => {
+    if (!routesLib || !map || pins.length < 2) {
+      if (directionsRendererRef.current) {
+        directionsRendererRef.current.setMap(null);
+      }
+      return;
+    }
+
+    if (!directionsRendererRef.current) {
+        directionsRendererRef.current = new routesLib.DirectionsRenderer({
+            map,
+            suppressMarkers: true,
+            polylineOptions: {
+                strokeColor: '#0ea5e9', // teal
+                strokeOpacity: 0.8,
+                strokeWeight: 5
+            }
+        });
+    } else {
+        directionsRendererRef.current.setMap(map);
+    }
+
+    const directionsService = new routesLib.DirectionsService();
+
+    const origin = pins[0];
+    const destination = pins[pins.length - 1];
+    const waypoints = pins.slice(1, -1).map(p => ({ location: p, stopover: true }));
+
+    directionsService.route({
+        origin,
+        destination,
+        waypoints,
+        optimizeWaypoints: true,
+        travelMode: google.maps.TravelMode.WALKING
+    }, (result, status) => {
+        if (status === google.maps.DirectionsStatus.OK && result) {
+            directionsRendererRef.current?.setDirections(result);
+        } else {
+            console.error("Smart Itinerary failed:", status);
+        }
+    });
+
+    return () => {
+        if (directionsRendererRef.current) {
+            directionsRendererRef.current.setMap(null);
+        }
+    };
+  }, [routesLib, map, pins]);
+
+  return null;
+}
+
+function MapController({ 
+  mapCenter, 
+  mapZoom,
+  isTourActive,
+  isTourPaused
+}: { 
+  mapCenter: {lat: number, lng: number} | null; 
+  mapZoom: number | null | undefined;
+  isTourActive?: boolean;
+  isTourPaused?: boolean;
+}) {
     const map = useMap();
+    const requestRef = useRef<number>();
+    const headingRef = useRef(0);
+
     useEffect(() => {
         if (!map) return;
+        
+        const targetTilt = isTourActive ? 60 : 0;
+        
         if (mapCenter) {
             const currentCenter = map.getCenter();
             if (!currentCenter || Math.abs(currentCenter.lat() - mapCenter.lat) > 0.0001 || Math.abs(currentCenter.lng() - mapCenter.lng) > 0.0001) {
-                map.panTo(mapCenter);
+                headingRef.current = 0;
+                map.moveCamera({ center: mapCenter, tilt: targetTilt, heading: headingRef.current });
+            } else {
+                map.moveCamera({ tilt: targetTilt });
             }
         }
         if (mapZoom !== undefined && mapZoom !== null) {
@@ -106,7 +185,27 @@ function MapController({ mapCenter, mapZoom }: { mapCenter: {lat: number, lng: n
                 map.setZoom(mapZoom);
             }
         }
-    }, [map, mapCenter, mapZoom]);
+    }, [map, mapCenter, mapZoom, isTourActive]);
+
+    // Cinematic 3D Rotation Loop
+    useEffect(() => {
+        if (!map || !isTourActive || isTourPaused) {
+            if (requestRef.current) cancelAnimationFrame(requestRef.current);
+            return;
+        }
+
+        const animate = () => {
+            headingRef.current = (headingRef.current + 0.1) % 360;
+            map.moveCamera({ heading: headingRef.current, tilt: 60 });
+            requestRef.current = requestAnimationFrame(animate);
+        };
+        requestRef.current = requestAnimationFrame(animate);
+
+        return () => {
+            if (requestRef.current) cancelAnimationFrame(requestRef.current);
+        };
+    }, [map, isTourActive, isTourPaused]);
+
     return null;
 }
 
@@ -143,7 +242,7 @@ function MeasureLine({ p1, p2 }: { p1: { lat: number; lng: number } | null; p2: 
   return null;
 }
 
-export function GMPMap({ mapType, mapQuery, mapCenter, mapZoom, directions, favoritesQuery, isLive, onCameraChange, measureP1, measureP2, onMapClick, customPins = [], onPinClick }: GMPMapProps) {
+export function GMPMap({ mapType, mapQuery, mapCenter, mapZoom, directions, favoritesQuery, isLive, onCameraChange, measureP1, measureP2, onMapClick, customPins = [], onPinClick, isTourActive, isTourPaused, showSmartItinerary }: GMPMapProps) {
   if (!hasValidKey) {
     return (
       <div className="flex flex-col items-center justify-center h-full w-full bg-[var(--bg-color)] text-[var(--text-primary)] p-6 overflow-y-auto">
@@ -190,7 +289,10 @@ export function GMPMap({ mapType, mapQuery, mapCenter, mapZoom, directions, favo
           }
         }}
       >
-        <MapController mapCenter={mapType === 'center' ? mapCenter : null} mapZoom={mapZoom} />
+        <MapController mapCenter={mapType === 'center' ? mapCenter : null} mapZoom={mapZoom} isTourActive={isTourActive} isTourPaused={isTourPaused} />
+        {showSmartItinerary && customPins && customPins.length >= 2 && (
+          <SmartItineraryRoute pins={customPins} />
+        )}
         {activeQuery && <PlaceSearch query={activeQuery} mapType={mapType} mapZoom={mapZoom} />}
         {mapType === 'directions' && directions && (
           <RouteDisplay origin={directions.origin} destination={directions.destination} />

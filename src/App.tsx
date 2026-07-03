@@ -49,7 +49,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { flushSync } from 'react-dom';
 import { CursorTrail, CursorResources } from './components/CursorEffects';
-import { GMPMap } from './components/GMPMap';
+import { GMPMap, API_KEY as GMP_API_KEY } from './components/GMPMap';
 import { auth, googleProvider, db } from './lib/firebase';
 import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 
@@ -259,6 +259,8 @@ export default function App() {
   const [selectedPinForDetail, setSelectedPinForDetail] = useState<{ id: string; lat: number; lng: number; label: string; color: string } | null>(null);
   const [pinAddress, setPinAddress] = useState<string | null>(null);
   const [isGeocoding, setIsGeocoding] = useState(false);
+  const [showSmartItinerary, setShowSmartItinerary] = useState(false);
+  const [showStreetView, setShowStreetView] = useState(false);
 
   // --- Tour Mode State ---
   const [isTourActive, setIsTourActive] = useState(false);
@@ -271,6 +273,7 @@ export default function App() {
     if (!selectedPinForDetail) {
       setPinAddress(null);
       setIsGeocoding(false);
+      setShowStreetView(false);
       return;
     }
 
@@ -3110,6 +3113,9 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
                   onMapClick={handleMapClick}
                   customPins={customPins}
                   onPinClick={(pin) => setSelectedPinForDetail(pin)}
+                  isTourActive={isTourActive}
+                  isTourPaused={isTourPaused}
+                  showSmartItinerary={showSmartItinerary}
                 />
               </div>
               <canvas ref={persistentCanvasRef} className="hidden" />
@@ -3548,9 +3554,35 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
                         <span className="text-gray-400 font-medium">Longitude</span>
                         <span className="font-mono font-medium text-gray-700 dark:text-gray-300">{selectedPinForDetail.lng.toFixed(6)}</span>
                       </div>
+                      
+                      {showStreetView && GMP_API_KEY && (
+                        <div className="mt-2 rounded-lg overflow-hidden border border-black/10 dark:border-white/10 relative h-[150px] w-full">
+                          <iframe
+                            width="100%"
+                            height="100%"
+                            style={{ border: 0 }}
+                            loading="lazy"
+                            allowFullScreen
+                            src={`https://www.google.com/maps/embed/v1/streetview?key=${GMP_API_KEY}&location=${selectedPinForDetail.lat},${selectedPinForDetail.lng}&heading=210&pitch=10&fov=35`}
+                          ></iframe>
+                        </div>
+                      )}
+                      
                     </div>
 
-                    <div className="flex gap-2 justify-end text-xs border-t border-black/5 dark:border-white/5 pt-2 mt-1">
+                    <div className="flex gap-2 justify-end text-xs border-t border-black/5 dark:border-white/5 pt-2 mt-1 flex-wrap">
+                      <button
+                        onClick={() => setShowStreetView(!showStreetView)}
+                        className={`px-3 py-1.5 rounded-lg border font-bold flex items-center gap-1.5 transition-all ${
+                          showStreetView 
+                            ? 'bg-blue-500 text-white border-blue-500' 
+                            : 'border-blue-500/20 text-blue-500 hover:bg-blue-500/10'
+                        }`}
+                      >
+                        <Compass size={13} />
+                        {showStreetView ? 'Hide Street View' : 'Street View'}
+                      </button>
+                      
                       <button
                         onClick={() => {
                           setCustomPins(prev => prev.filter(p => p.id !== selectedPinForDetail.id));
@@ -4375,11 +4407,26 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
             <MapPin className="text-purple-500" size={18} />
             <h3 className="font-bold text-[var(--text-primary)]">Points of Interest</h3>
           </div>
-          {customPins.length > 0 && (
-            <span className="text-[10px] bg-purple-500/10 text-purple-600 dark:text-purple-400 px-2 py-0.5 rounded-full font-bold">
-              {customPins.length} {customPins.length === 1 ? 'Pin' : 'Pins'}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {customPins.length >= 2 && (
+              <button
+                onClick={() => setShowSmartItinerary(!showSmartItinerary)}
+                className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-all ${
+                  showSmartItinerary 
+                    ? 'bg-teal-500 text-white shadow-sm' 
+                    : 'bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500/20'
+                }`}
+                title="Optimize walking route between your pins"
+              >
+                {showSmartItinerary ? 'Hide Route' : 'Smart Route'}
+              </button>
+            )}
+            {customPins.length > 0 && (
+              <span className="text-[10px] bg-purple-500/10 text-purple-600 dark:text-purple-400 px-2 py-0.5 rounded-full font-bold">
+                {customPins.length} {customPins.length === 1 ? 'Pin' : 'Pins'}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 pr-1">
