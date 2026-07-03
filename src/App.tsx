@@ -44,7 +44,9 @@ import {
   Pause,
   SkipForward,
   SkipBack,
-  User as UserIcon
+  User as UserIcon,
+  Globe2,
+  Heart
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { flushSync } from 'react-dom';
@@ -71,7 +73,7 @@ function getHaversineDistance(
   const d = R * c; // Distance in km
   return d;
 }
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, collection, query, getDocs, addDoc, updateDoc, increment, orderBy, limit } from 'firebase/firestore';
 import io from 'socket.io-client';
 
 // --- Types ---
@@ -93,7 +95,7 @@ interface BBox {
 
 interface DebugLog {
   time: string;
-  type: 'info' | 'gemini' | 'tool' | 'event';
+  type: 'info' | 'gemini' | 'tool' | 'event' | 'error';
   message: string;
 }
 
@@ -251,23 +253,41 @@ export default function App() {
   const [measureP2, setMeasureP2] = useState<{ lat: number; lng: number } | null>(null);
   const [measureUnit, setMeasureUnit] = useState<'km' | 'miles'>('km');
   const [isProgressShareCopied, setIsProgressShareCopied] = useState(false);
-  const [customPins, setCustomPins] = useState<{ id: string; lat: number; lng: number; label: string; color: string }[]>([]);
+  const [customPins, setCustomPins] = useState<{ id: string; lat: number; lng: number; label: string; color: string; mediaUrl?: string }[]>([]);
   const [isPinDroppingMode, setIsPinDroppingMode] = useState(false);
   const [pendingPinCoords, setPendingPinCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [newPinLabel, setNewPinLabel] = useState('');
   const [newPinColor, setNewPinColor] = useState('#EF4444');
-  const [selectedPinForDetail, setSelectedPinForDetail] = useState<{ id: string; lat: number; lng: number; label: string; color: string } | null>(null);
+  const [newPinMedia, setNewPinMedia] = useState<string | null>(null);
+  const [selectedPinForDetail, setSelectedPinForDetail] = useState<{ id: string; lat: number; lng: number; label: string; color: string; mediaUrl?: string } | null>(null);
   const [pinAddress, setPinAddress] = useState<string | null>(null);
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [showSmartItinerary, setShowSmartItinerary] = useState(false);
   const [showStreetView, setShowStreetView] = useState(false);
 
+  // --- Live Weather State ---
+  const [weatherData, setWeatherData] = useState<{ temp: number; description: string; icon: string; isDay: boolean } | null>(null);
+  const [isWeatherLoading, setIsWeatherLoading] = useState(false);
+
+  // --- Gamification State ---
+  const [achievements, setAchievements] = useState<{ id: string; name: string; description: string; icon: string; unlocked: boolean }[]>([
+    { id: 'tarih_kurdu', name: 'Tarih Kurdu', description: '5 favori mekan kaydet.', icon: '🏛️', unlocked: false },
+    { id: 'haritaci', name: 'Haritacı', description: '5 özel pin bırak.', icon: '🗺️', unlocked: false },
+    { id: 'turist', name: 'Deneyimli Turist', description: 'İlk turunu tamamla.', icon: '🚌', unlocked: false }
+  ]);
+  const [showAchievementNotification, setShowAchievementNotification] = useState<{ name: string; icon: string } | null>(null);
+
   // --- Tour Mode State ---
   const [isTourActive, setIsTourActive] = useState(false);
-  const [tourType, setTourType] = useState<'london' | 'custom'>('london');
+  const [tourType, setTourType] = useState<'london' | 'custom' | 'public'>('london');
   const [currentTourIndex, setCurrentTourIndex] = useState(0);
   const [isTourPaused, setIsTourPaused] = useState(false);
   const [tourProgress, setTourProgress] = useState(0);
+
+  // --- Public Tours State ---
+  const [publicTours, setPublicTours] = useState<{ id: string; name: string; creatorName: string; likes: number; items: any[] }[]>([]);
+  const [isPublishingTour, setIsPublishingTour] = useState(false);
+  const [activePublicTourId, setActivePublicTourId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!selectedPinForDetail) {
@@ -400,6 +420,25 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Fetch Public Tours
+  useEffect(() => {
+    const fetchPublicTours = async () => {
+      try {
+        const q = query(collection(db, 'public_tours'), orderBy('likes', 'desc'), limit(10));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const tours = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any;
+          setPublicTours(tours);
+        });
+        return unsubscribe;
+      } catch (err) {
+        console.error('Failed to load public tours', err);
+      }
+    };
+    let unsub: any;
+    fetchPublicTours().then(u => unsub = u);
+    return () => { if (unsub) unsub(); };
+  }, []);
+
   // Sync favorites, markers, and custom pins to Firestore
   useEffect(() => {
     if (currentUser) {
@@ -464,6 +503,75 @@ export default function App() {
   const [showMarkings, setShowMarkings] = useState(false);
   const [enableVoiceFeedback, setEnableVoiceFeedback] = useState(true);
   const [voiceVolume, setVoiceVolume] = useState(1.0);
+
+  // --- Live Weather Fetching ---
+  useEffect(() => {
+    const fetchWeather = async () => {
+      setIsWeatherLoading(true);
+      try {
+        // London Coordinates
+        const lat = 51.5074;
+        const lng = -0.1278;
+        const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true`);
+        const data = await res.json();
+        
+        if (data && data.current_weather) {
+          const current = data.current_weather;
+          let description = 'Clear';
+          let icon = '☀️';
+          
+          if (current.weathercode >= 1 && current.weathercode <= 3) {
+            description = 'Partly Cloudy';
+            icon = '⛅';
+          } else if (current.weathercode >= 45 && current.weathercode <= 48) {
+            description = 'Foggy';
+            icon = '🌫️';
+          } else if (current.weathercode >= 51 && current.weathercode <= 67) {
+            description = 'Rainy';
+            icon = '🌧️';
+          } else if (current.weathercode >= 71 && current.weathercode <= 77) {
+            description = 'Snowy';
+            icon = '❄️';
+          } else if (current.weathercode >= 95 && current.weathercode <= 99) {
+            description = 'Thunderstorm';
+            icon = '⛈️';
+          }
+
+          if (current.is_day === 0) {
+            if (description === 'Clear') {
+                icon = '🌙';
+            }
+          }
+
+          setWeatherData({
+            temp: current.temperature,
+            description,
+            icon,
+            isDay: current.is_day === 1
+          });
+
+          // Dynamic Dark Mode Switch based on live weather (Night time)
+          if (current.is_day === 0 && !isDarkMode) {
+             setIsDarkMode(true);
+             addLog('info', '🌤️ Switched to Night Mode based on live London weather.');
+          } else if (current.is_day === 1 && isDarkMode) {
+             setIsDarkMode(false);
+             addLog('info', '🌤️ Switched to Day Mode based on live London weather.');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch weather:', err);
+      } finally {
+        setIsWeatherLoading(false);
+      }
+    };
+    fetchWeather();
+    
+    // Refresh weather every 15 minutes
+    const interval = setInterval(fetchWeather, 15 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []); // Only on mount
+
   const [showWaveform, setShowWaveform] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('showWaveform');
@@ -512,6 +620,11 @@ export default function App() {
   const getActiveTourItems = () => {
     if (tourType === 'london') {
       return LONDON_TOUR_ITEMS;
+    }
+    
+    if (tourType === 'public' && activePublicTourId) {
+      const tour = publicTours.find(t => t.id === activePublicTourId);
+      if (tour) return tour.items;
     }
 
     const items: any[] = [];
@@ -564,6 +677,36 @@ export default function App() {
 
   const tourItems = getActiveTourItems();
 
+  // --- Gamification Logic ---
+  const unlockAchievement = (id: string) => {
+    setAchievements(prev => {
+      const idx = prev.findIndex(a => a.id === id);
+      if (idx === -1 || prev[idx].unlocked) return prev;
+      
+      const newAch = [...prev];
+      newAch[idx].unlocked = true;
+      
+      // Show notification
+      setShowAchievementNotification({ name: newAch[idx].name, icon: newAch[idx].icon });
+      setTimeout(() => setShowAchievementNotification(null), 4000);
+      addLog('event', `🏆 Başarı Açıldı: ${newAch[idx].name}`);
+      
+      return newAch;
+    });
+  };
+
+  useEffect(() => {
+    if (favoriteLocations.length >= 5) {
+      unlockAchievement('tarih_kurdu');
+    }
+  }, [favoriteLocations.length]);
+
+  useEffect(() => {
+    if (customPins.length >= 5) {
+      unlockAchievement('haritaci');
+    }
+  }, [customPins.length]);
+
   // Progress cycle effect (8 seconds total duration, updates every 100ms)
   useEffect(() => {
     if (!isTourActive || isTourPaused || tourItems.length === 0) return;
@@ -571,7 +714,11 @@ export default function App() {
     const interval = setInterval(() => {
       setTourProgress(prev => {
         if (prev >= 100) {
-          setCurrentTourIndex(curr => (curr + 1) % tourItems.length);
+          setCurrentTourIndex(curr => {
+            const next = (curr + 1) % tourItems.length;
+            if (next === 0) unlockAchievement('turist'); // Completed full lap
+            return next;
+          });
           return 0;
         }
         return prev + 1.25; // 1.25% * 80 steps (100ms * 80 = 8 seconds) = 100%
@@ -3120,8 +3267,19 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
               </div>
               <canvas ref={persistentCanvasRef} className="hidden" />
 
-              {/* Action Buttons */}
+              {/* Action Buttons & HUD */}
               <div className="absolute top-4 right-4 flex gap-2 z-[60]">
+                {/* Weather Widget HUD */}
+                {weatherData && (
+                  <div className="hidden sm:flex items-center gap-2 p-2.5 px-3 bg-white/90 dark:bg-black/70 backdrop-blur-md border border-black/10 dark:border-white/10 rounded-xl shadow-lg pointer-events-auto transition-all">
+                    <span className="text-lg leading-none">{weatherData.icon}</span>
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold text-gray-900 dark:text-gray-100 leading-none">{weatherData.temp}°C</span>
+                      <span className="text-[10px] text-gray-500 font-medium leading-tight">{weatherData.description}</span>
+                    </div>
+                  </div>
+                )}
+                
                 {/* Clear Markers Button */}
                 <button
                   onClick={(e) => {
@@ -3456,11 +3614,42 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
                           </div>
                         </div>
 
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[11px] font-bold text-gray-500">PIN MEDIA (PHOTO/AUDIO)</label>
+                          <input 
+                            type="file" 
+                            accept="image/*, audio/*" 
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                if (file.size > 2 * 1024 * 1024) { // 2MB limit
+                                  addLog('error', 'Media size should be less than 2MB');
+                                  return;
+                                }
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                  setNewPinMedia(reader.result as string);
+                                  addLog('info', `Attached media to pending pin.`);
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                            className="text-xs file:mr-2 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100"
+                          />
+                          {newPinMedia && (
+                            <div className="text-[10px] text-green-500 flex items-center gap-1 font-bold mt-1">
+                              <Check size={12} /> Media Attached
+                              <button onClick={() => setNewPinMedia(null)} className="ml-2 text-red-500 underline">Remove</button>
+                            </div>
+                          )}
+                        </div>
+
                         <div className="flex gap-2 justify-end text-xs border-t border-black/5 dark:border-white/5 pt-2 mt-1">
                           <button
                             onClick={() => {
                               setPendingPinCoords(null);
                               setNewPinLabel('');
+                              setNewPinMedia(null);
                             }}
                             className="px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 transition-all text-gray-600 dark:text-gray-300 font-semibold"
                           >
@@ -3477,12 +3666,14 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
                                 lat: pendingPinCoords.lat,
                                 lng: pendingPinCoords.lng,
                                 label: newPinLabel.trim(),
-                                color: newPinColor
+                                color: newPinColor,
+                                mediaUrl: newPinMedia || undefined
                               };
                               setCustomPins(prev => [...prev, pin]);
                               addLog('info', `Successfully dropped custom pin: "${pin.label}"`);
                               setPendingPinCoords(null);
                               setNewPinLabel('');
+                              setNewPinMedia(null);
                             }}
                             disabled={!newPinLabel.trim()}
                             className="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold disabled:opacity-50 transition-all shadow-md active:scale-95"
@@ -3565,6 +3756,16 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
                             allowFullScreen
                             src={`https://www.google.com/maps/embed/v1/streetview?key=${GMP_API_KEY}&location=${selectedPinForDetail.lat},${selectedPinForDetail.lng}&heading=210&pitch=10&fov=35`}
                           ></iframe>
+                        </div>
+                      )}
+                      
+                      {selectedPinForDetail.mediaUrl && (
+                        <div className="mt-2 rounded-lg overflow-hidden border border-black/10 dark:border-white/10 relative">
+                           {selectedPinForDetail.mediaUrl.startsWith('data:audio') ? (
+                             <audio controls className="w-full h-10" src={selectedPinForDetail.mediaUrl} />
+                           ) : (
+                             <img src={selectedPinForDetail.mediaUrl} alt="Pin attached media" className="w-full h-auto max-h-[150px] object-cover" />
+                           )}
                         </div>
                       )}
                       
@@ -4410,6 +4611,49 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
           <div className="flex items-center gap-2">
             {customPins.length >= 2 && (
               <button
+                onClick={async () => {
+                  if (isPublishingTour) return;
+                  if (!currentUser) {
+                    addLog('error', 'You must be logged in to publish a tour.');
+                    return;
+                  }
+                  setIsPublishingTour(true);
+                  try {
+                    const tourName = prompt("Name your public tour:", `${currentUser.displayName}'s Tour`);
+                    if (!tourName) { setIsPublishingTour(false); return; }
+                    
+                    const tourDoc = {
+                      creatorId: currentUser.uid,
+                      creatorName: currentUser.displayName || 'Anonymous Explorer',
+                      name: tourName,
+                      likes: 0,
+                      items: customPins.map(p => ({
+                        name: p.label,
+                        description: `Custom dropped pin on the map. Pin color: ${p.color}`,
+                        type: 'coordinate',
+                        center: { lat: p.lat, lng: p.lng },
+                        zoom: 16
+                      })),
+                      createdAt: new Date().toISOString()
+                    };
+                    await addDoc(collection(db, 'public_tours'), tourDoc);
+                    addLog('info', `🎉 Successfully published tour: "${tourName}"`);
+                  } catch (err) {
+                    addLog('error', 'Failed to publish tour.');
+                  } finally {
+                    setIsPublishingTour(false);
+                  }
+                }}
+                disabled={isPublishingTour}
+                className="text-[10px] px-2 py-0.5 rounded-full font-bold transition-all bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/20 disabled:opacity-50 flex items-center gap-1"
+                title="Publish your pins as a Public Tour"
+              >
+                {isPublishingTour ? <Loader size={10} className="animate-spin"/> : <Globe2 size={10}/>}
+                Publish
+              </button>
+            )}
+            {customPins.length >= 2 && (
+              <button
                 onClick={() => setShowSmartItinerary(!showSmartItinerary)}
                 className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-all ${
                   showSmartItinerary 
@@ -4478,6 +4722,74 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
                   title={`Delete pin: ${pin.label}`}
                 >
                   <Trash2 size={14} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      {/* Community Tours Sidebar Section */}
+      <section className="shrink-0 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6 flex flex-col gap-4 max-h-[350px] overflow-hidden mt-4">
+        <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-2">
+          <div className="flex items-center gap-2">
+            <Globe2 className="text-indigo-500" size={18} />
+            <h3 className="font-bold text-[var(--text-primary)]">Community Tours</h3>
+          </div>
+          <span className="text-[10px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded-full font-bold">
+            Public Gallery
+          </span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 pr-1">
+          {publicTours.length === 0 ? (
+            <div className="text-center py-6 px-4">
+              <Loader className="animate-spin text-indigo-500 mx-auto mb-2" size={16} />
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                Loading community tours...
+              </p>
+            </div>
+          ) : (
+            publicTours.map((tour) => (
+              <div 
+                key={tour.id}
+                onClick={() => {
+                  setActivePublicTourId(tour.id);
+                  setTourType('public');
+                  setIsTourActive(true);
+                  setCurrentTourIndex(0);
+                  addLog('info', `Started public community tour: "${tour.name}" by ${tour.creatorName}`);
+                }}
+                className={`group flex items-center justify-between p-3 rounded-xl border transition-all duration-200 cursor-pointer ${
+                  tourType === 'public' && activePublicTourId === tour.id
+                    ? 'bg-indigo-500/10 border-indigo-500/30'
+                    : 'bg-black/5 dark:bg-white/5 hover:bg-indigo-500/5 dark:hover:bg-indigo-500/10 border-transparent hover:border-indigo-500/15'
+                }`}
+              >
+                <div className="flex flex-col min-w-0 flex-grow pr-2">
+                  <div className="font-bold text-sm text-[var(--text-primary)] truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                    {tour.name}
+                  </div>
+                  <div className="text-[10px] text-[var(--text-secondary)] truncate">
+                    by {tour.creatorName} • {tour.items.length} locations
+                  </div>
+                </div>
+
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      await updateDoc(doc(db, 'public_tours', tour.id), { likes: increment(1) });
+                      addLog('info', `Liked tour "${tour.name}"!`);
+                    } catch (err) {
+                      addLog('error', 'Failed to like tour.');
+                    }
+                  }}
+                  className="flex items-center gap-1.5 p-1.5 rounded-lg text-gray-400 hover:text-pink-500 hover:bg-pink-500/10 transition-all"
+                  title="Like this tour"
+                >
+                  <Heart size={14} className="group-hover:animate-pulse" />
+                  <span className="text-xs font-mono font-bold">{tour.likes || 0}</span>
                 </button>
               </div>
             ))
@@ -4876,6 +5188,25 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
             )}
           </div>
         </motion.div>
+      </motion.div>
+    )}
+  </AnimatePresence>
+
+  <AnimatePresence>
+    {showAchievementNotification && (
+      <motion.div
+        initial={{ opacity: 0, y: -50, scale: 0.9 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: -20, scale: 0.9 }}
+        className="fixed top-20 left-1/2 -translate-x-1/2 z-[10000] pointer-events-none"
+      >
+        <div className="bg-yellow-400 dark:bg-yellow-500 text-yellow-950 px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 border-2 border-yellow-300 dark:border-yellow-400">
+          <span className="text-2xl">{showAchievementNotification.icon}</span>
+          <div className="flex flex-col">
+            <span className="text-xs font-bold uppercase tracking-widest opacity-80">Başarı Açıldı!</span>
+            <span className="text-sm font-black">{showAchievementNotification.name}</span>
+          </div>
+        </div>
       </motion.div>
     )}
   </AnimatePresence>

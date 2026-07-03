@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile data.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "lastLogin": { "type": "string" },
+        "savedTourType": { "type": "string" },
+        "savedTourIndex": { "type": "number" },
+        "favorites": { "type": "array" },
+        "favoriteLocations": { "type": "array" },
+        "markers": { "type": "array" },
+        "customPins": { "type": "array" }
+      }
+    },
+    "PublicTour": {
+      "title": "PublicTour",
+      "description": "A public tour shared by a user.",
+      "type": "object",
+      "properties": {
+        "creatorId": { "type": "string" },
+        "creatorName": { "type": "string" },
+        "name": { "type": "string" },
+        "likes": { "type": "number" },
+        "items": { "type": "array" },
+        "createdAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "User data"
+    },
+    "/public_tours/{tourId}": {
+      "schema": { "$ref": "PublicTour" },
+      "description": "Public tours"
+    }
+  }
+}
