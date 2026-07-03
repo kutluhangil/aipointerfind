@@ -1,31 +1,3 @@
-<div align="center">
-
-<img width="100%" alt="London Landmarks Pointer Banner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-
-<br /><br />
-
-<a href="https://aipointerfind.vercel.app"><img src="https://img.shields.io/badge/CANLI_DEMO-aipointerfind.vercel.app-000000?style=for-the-badge&logo=vercel&logoColor=white" alt="live demo" /></a>
-
-<br />
-
-<img src="https://img.shields.io/badge/AI--Pointer%3A_Find-v1.0.0-6C5CE7?style=for-the-badge&logoColor=white" alt="version" />
-<img src="https://img.shields.io/badge/Gemini_Live-Native_Audio-8E75FF?style=for-the-badge&logo=googlegemini&logoColor=white" alt="gemini" />
-<img src="https://img.shields.io/badge/Google_Maps-Platform-4285F4?style=for-the-badge&logo=googlemaps&logoColor=white" alt="maps" />
-<img src="https://img.shields.io/badge/PWA-Installable-5A0FC8?style=for-the-badge&logo=pwa&logoColor=white" alt="pwa" />
-
-<br />
-
-<img src="https://img.shields.io/badge/TypeScript-3178c6?style=for-the-badge&logo=typescript&logoColor=white" alt="typescript" />
-<img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="react" />
-<img src="https://img.shields.io/badge/Vite-6-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="vite" />
-<img src="https://img.shields.io/badge/Tailwind_CSS-v4-38BDF8?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="tailwind" />
-<img src="https://img.shields.io/badge/Firebase-Auth_%2B_Firestore-FFCA28?style=for-the-badge&logo=firebase&logoColor=black" alt="firebase" />
-<img src="https://img.shields.io/badge/Socket.io-Realtime_Cursors-010101?style=for-the-badge&logo=socketdotio&logoColor=white" alt="socketio" />
-<img src="https://img.shields.io/badge/Express-Node_Server-000000?style=for-the-badge&logo=express&logoColor=white" alt="express" />
-<img src="https://img.shields.io/badge/i18n-TR_%2F_EN-0EA5E9?style=for-the-badge" alt="i18n" />
-
-<br /><br />
-
 ```text
  █████╗ ██╗    ██████╗  ██████╗ ██╗███╗   ██╗████████╗███████╗██████╗
 ██╔══██╗██║    ██╔══██╗██╔═══██╗██║████╗  ██║╚══██╔══╝██╔════╝██╔══██╗
