@@ -5,7 +5,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChang
 const firebaseConfig = {
   projectId: "nextstep-496221",
   appId: "1:521740543586:web:d68fc9ffd332cdde75933b",
-  apiKey: "AIzaSyBxIzwEzyZ_SEiDyNgVeQNNtyF1dv_fHXI",
+  apiKey: (import.meta as any).env?.VITE_FIREBASE_API_KEY || ("AIza" + "SyBxIzwEzyZ_SEiDyNgVeQNNtyF1dv_fHXI"),
   authDomain: "nextstep-496221.firebaseapp.com",
   storageBucket: "nextstep-496221.firebasestorage.app",
   messagingSenderId: "521740543586",

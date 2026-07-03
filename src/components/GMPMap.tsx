@@ -41,7 +41,7 @@ function PlaceSearch({ query, mapType, mapZoom }: { query: string, mapType: stri
         const bounds = new google.maps.LatLngBounds();
         places.forEach(p => p.location && bounds.extend(p.location));
         if (places.length === 1 && mapZoom) {
-            map.setCenter(places[0].location!);
+            map.panTo(places[0].location!);
             map.setZoom(mapZoom);
         } else {
             map.fitBounds(bounds);
@@ -97,7 +97,7 @@ function MapController({ mapCenter, mapZoom }: { mapCenter: {lat: number, lng: n
         if (mapCenter) {
             const currentCenter = map.getCenter();
             if (!currentCenter || Math.abs(currentCenter.lat() - mapCenter.lat) > 0.0001 || Math.abs(currentCenter.lng() - mapCenter.lng) > 0.0001) {
-                map.setCenter(mapCenter);
+                map.panTo(mapCenter);
             }
         }
         if (mapZoom !== undefined && mapZoom !== null) {

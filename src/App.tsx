@@ -38,6 +38,11 @@ import {
   Trash2,
   Info,
   Ruler,
+  Compass,
+  Play,
+  Pause,
+  SkipForward,
+  SkipBack,
   User as UserIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -384,6 +389,169 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('showWaveform', showWaveform ? 'true' : 'false');
   }, [showWaveform]);
+
+  // --- Tour Mode State ---
+  const [isTourActive, setIsTourActive] = useState(false);
+  const [tourType, setTourType] = useState<'london' | 'custom'>('london');
+  const [currentTourIndex, setCurrentTourIndex] = useState(0);
+  const [isTourPaused, setIsTourPaused] = useState(false);
+  const [tourProgress, setTourProgress] = useState(0);
+
+  // Default London Landmarks Tour
+  const LONDON_TOUR_ITEMS = [
+    {
+      name: "London Eye",
+      description: "The London Eye is a giant cantilevered observation wheel on the South Bank of the River Thames. It is Europe's tallest cantilevered observation wheel, offering spectacular 360-degree views of the capital.",
+      type: 'coordinate' as const,
+      center: { lat: 51.503324, lng: -0.119543 },
+      zoom: 16
+    },
+    {
+      name: "Hyde Park",
+      description: "One of London's finest Royal Parks, Hyde Park is a Grade I-listed urban green space featuring the beautiful Serpentine Lake, expansive leisure lawns, and Speakers' Corner.",
+      type: 'coordinate' as const,
+      center: { lat: 51.507268, lng: -0.165730 },
+      zoom: 14
+    },
+    {
+      name: "Westminster Abbey",
+      description: "A large, mainly Gothic abbey church in the City of Westminster, London. Since 1066, it has been the historic coronation site for 40 English and British monarchs.",
+      type: 'coordinate' as const,
+      center: { lat: 51.498724, lng: -0.128864 },
+      zoom: 16
+    },
+    {
+      name: "St Pancras Station",
+      description: "Famous for its magnificent Victorian Gothic red brick architecture, St Pancras is a historic railway terminus on Euston Road serving international Eurostar journeys.",
+      type: 'coordinate' as const,
+      center: { lat: 51.530058, lng: -0.125345 },
+      zoom: 16
+    }
+  ];
+
+  // Dynamic selector for active tour items list
+  const getActiveTourItems = () => {
+    if (tourType === 'london') {
+      return LONDON_TOUR_ITEMS;
+    }
+
+    const items: any[] = [];
+    
+    // 1. Add favorite locations (strings)
+    favoriteLocations.forEach(loc => {
+      items.push({
+        name: loc,
+        description: "A saved favorite location in your collections.",
+        type: 'search',
+        query: loc,
+        zoom: 15
+      });
+    });
+
+    // 2. Add custom pins
+    customPins.forEach(pin => {
+      items.push({
+        name: pin.label,
+        description: `Custom dropped pin on the map. Pin color: ${pin.color}`,
+        type: 'coordinate',
+        center: { lat: pin.lat, lng: pin.lng },
+        zoom: 16
+      });
+    });
+
+    // 3. Add favorite photos (from PHOTOS)
+    favorites.forEach(favId => {
+      const photo = PHOTOS.find(p => p.id === favId);
+      if (photo) {
+        let center: { lat: number; lng: number } | undefined = undefined;
+        if (photo.title === "London Eye") center = { lat: 51.503324, lng: -0.119543 };
+        else if (photo.title === "Hyde Park") center = { lat: 51.507268, lng: -0.165730 };
+        else if (photo.title === "Westminster Abbey") center = { lat: 51.498724, lng: -0.128864 };
+        else if (photo.title === "St Pancras Station") center = { lat: 51.530058, lng: -0.125345 };
+
+        items.push({
+          name: photo.title,
+          description: photo.description,
+          type: center ? 'coordinate' : 'search',
+          center,
+          query: photo.title,
+          zoom: 15
+        });
+      }
+    });
+
+    return items;
+  };
+
+  const tourItems = getActiveTourItems();
+
+  // Progress cycle effect (8 seconds total duration, updates every 100ms)
+  useEffect(() => {
+    if (!isTourActive || isTourPaused || tourItems.length === 0) return;
+
+    const interval = setInterval(() => {
+      setTourProgress(prev => {
+        if (prev >= 100) {
+          setCurrentTourIndex(curr => (curr + 1) % tourItems.length);
+          return 0;
+        }
+        return prev + 1.25; // 1.25% * 80 steps (100ms * 80 = 8 seconds) = 100%
+      });
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [isTourActive, isTourPaused, tourItems.length]);
+
+  // Handle map panning and logs when the active tour item changes
+  useEffect(() => {
+    if (!isTourActive || tourItems.length === 0) return;
+    const item = tourItems[currentTourIndex];
+    if (!item) return;
+
+    if (item.type === 'coordinate') {
+      setMapType('center');
+      setMapCenter(item.center);
+      setMapZoom(item.zoom || 15);
+    } else {
+      setMapType('search');
+      setMapQuery(item.query);
+      setMapZoom(item.zoom || 15);
+    }
+    addLog('info', `🎯 Tour Panning to: ${item.name}`);
+  }, [currentTourIndex, isTourActive, tourType]); // Reset or update when index/active/type changes
+
+  const startTour = (type: 'london' | 'custom' = 'london') => {
+    setTourType(type);
+    setCurrentTourIndex(0);
+    setTourProgress(0);
+    setIsTourActive(true);
+    setIsTourPaused(false);
+    
+    // Clear conflicting modes
+    setIsMeasuring(false);
+    setIsPinDroppingMode(false);
+    
+    addLog('info', `✨ Tour Mode started: ${type === 'london' ? "London Landmarks" : "Saved Favorites"}`);
+  };
+
+  const stopTour = () => {
+    setIsTourActive(false);
+    setIsTourPaused(false);
+    setTourProgress(0);
+    addLog('info', "Tour Mode stopped.");
+  };
+
+  const handleTourNext = () => {
+    if (tourItems.length === 0) return;
+    setTourProgress(0);
+    setCurrentTourIndex(prev => (prev + 1) % tourItems.length);
+  };
+
+  const handleTourPrev = () => {
+    if (tourItems.length === 0) return;
+    setTourProgress(0);
+    setCurrentTourIndex(prev => (prev - 1 + tourItems.length) % tourItems.length);
+  };
 
   const [audioStatus, setAudioStatus] = useState<'suspended' | 'running' | 'closed'>('suspended');
   const [isLive, setIsLive] = useState(false);
@@ -2971,6 +3139,29 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
                     {isPinDroppingMode ? 'Placing Pin...' : 'Drop Pin'}
                   </span>
                 </button>
+                {/* Tour Mode Button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isTourActive) {
+                      stopTour();
+                    } else {
+                      const customItems = getActiveTourItems();
+                      startTour(customItems.length > 0 ? 'custom' : 'london');
+                    }
+                  }}
+                  className={`p-2.5 backdrop-blur-md border border-black/10 dark:border-white/10 rounded-xl shadow-lg hover:scale-105 transition-all flex items-center gap-2 pointer-events-auto ${
+                    isTourActive 
+                      ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white shadow-emerald-500/10' 
+                      : 'bg-white/90 dark:bg-black/70 text-gray-700 dark:text-gray-200 hover:bg-white dark:hover:bg-black'
+                  }`}
+                  title="Tour Mode (Cycle through saved or iconic places)"
+                >
+                  <Compass size={18} className={isTourActive ? "animate-spin-slow" : ""} />
+                  <span className="text-sm font-semibold hidden sm:inline">
+                    {isTourActive ? 'Tour Active' : 'Tour Mode'}
+                  </span>
+                </button>
               </div>
 
               {/* Measure Distance HUD */}
@@ -3287,6 +3478,139 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              {/* Tour Mode Controls HUD */}
+              <AnimatePresence>
+                {isTourActive && tourItems.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 50 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 50 }}
+                    className="absolute bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md bg-white/95 dark:bg-black/90 backdrop-blur-md border border-black/10 dark:border-white/10 p-5 rounded-3xl shadow-2xl z-[60] flex flex-col gap-4 pointer-events-auto text-[var(--text-primary)] transition-all overflow-hidden"
+                  >
+                    {/* Glowing Accent line */}
+                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-500 to-emerald-500" />
+
+                    {/* Header */}
+                    <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-teal-500/10 text-teal-600 dark:text-teal-400 rounded-lg animate-pulse">
+                          <Compass size={18} />
+                        </div>
+                        <div className="flex flex-col">
+                          <h4 className="font-bold text-sm tracking-tight text-gray-900 dark:text-gray-100 font-sans">
+                            Tour Mode Active
+                          </h4>
+                          <span className="text-[10px] text-gray-400 font-medium">
+                            {tourType === 'london' ? "Iconic London" : "Saved Favorites"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {/* Tour Selector (Only if user has custom/saved favorites to tour) */}
+                        {getActiveTourItems().length > 0 && tourType === 'london' && (
+                          <button
+                            onClick={() => startTour('custom')}
+                            className="px-2.5 py-1 rounded bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-[10px] font-bold text-teal-600 dark:text-teal-400 transition-all border border-teal-500/20"
+                          >
+                            Tour My Favorites
+                          </button>
+                        )}
+                        {tourType === 'custom' && (
+                          <button
+                            onClick={() => startTour('london')}
+                            className="px-2.5 py-1 rounded bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-[10px] font-bold text-teal-600 dark:text-teal-400 transition-all border border-teal-500/20"
+                          >
+                            Tour London Icons
+                          </button>
+                        )}
+                        <button
+                          onClick={stopTour}
+                          className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors bg-black/5 dark:bg-white/5 rounded-full"
+                          title="Exit Tour Mode"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Location Info */}
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex justify-between items-baseline">
+                        <h3 className="text-base font-extrabold text-gray-900 dark:text-gray-100 font-sans tracking-tight truncate max-w-[280px]">
+                          {tourItems[currentTourIndex]?.name}
+                        </h3>
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-black/5 dark:bg-white/10 text-gray-500 dark:text-gray-400">
+                          {currentTourIndex + 1} / {tourItems.length}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed font-normal min-h-[48px]">
+                        {tourItems[currentTourIndex]?.description}
+                      </p>
+                    </div>
+
+                    {/* Progress Dots */}
+                    <div className="flex justify-center gap-1.5 py-1">
+                      {tourItems.map((_, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            setTourProgress(0);
+                            setCurrentTourIndex(idx);
+                          }}
+                          className={`h-1.5 rounded-full transition-all duration-300 ${
+                            idx === currentTourIndex 
+                              ? 'w-6 bg-teal-500' 
+                              : 'w-1.5 bg-gray-300 dark:bg-gray-700 hover:bg-gray-400'
+                          }`}
+                        />
+                      ))}
+                    </div>
+
+                    {/* Controls Bar */}
+                    <div className="flex items-center justify-between border-t border-black/5 dark:border-white/5 pt-3">
+                      <div className="text-[10px] text-gray-400 font-semibold font-mono">
+                        {isTourPaused ? 'PAUSED' : 'AUTO-CYCLING'}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleTourPrev}
+                          className="p-2 rounded-lg bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 hover:scale-105 transition-all"
+                          title="Previous Stop"
+                        >
+                          <SkipBack size={15} />
+                        </button>
+                        <button
+                          onClick={() => setIsTourPaused(!isTourPaused)}
+                          className={`p-2 rounded-full hover:scale-105 transition-all ${
+                            isTourPaused 
+                              ? 'bg-teal-500 text-white' 
+                              : 'bg-black/5 dark:bg-white/5 text-gray-600 dark:text-gray-300 hover:bg-black/10 dark:hover:bg-white/10'
+                          }`}
+                          title={isTourPaused ? "Resume Auto-cycle" : "Pause Auto-cycle"}
+                        >
+                          {isTourPaused ? <Play size={15} /> : <Pause size={15} />}
+                        </button>
+                        <button
+                          onClick={handleTourNext}
+                          className="p-2 rounded-lg bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 hover:scale-105 transition-all"
+                          title="Next Stop"
+                        >
+                          <SkipForward size={15} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Glowing Progress Line */}
+                    <div 
+                      className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-teal-500 to-emerald-500 transition-all duration-100 ease-linear shadow-[0_-2px_10px_rgba(20,184,166,0.3)]"
+                      style={{ width: `${tourProgress}%` }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
         </main>
@@ -3594,18 +3918,38 @@ When the user points and speaks a command, respond cheerfully like a tour guide 
                   <Bookmark className="text-[var(--accent-color)]" size={18} />
                   <h3 className="font-bold text-[var(--text-primary)]">Favorites</h3>
                 </div>
-                <button
-                  onClick={() => setIsFilteringFavorites(!isFilteringFavorites)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
-                    isFilteringFavorites 
-                      ? 'bg-[var(--accent-color)] text-white border-[var(--accent-color)] shadow-md' 
-                      : 'bg-[var(--bg-color)] text-[var(--text-secondary)] border-[var(--card-border)] hover:bg-[var(--inner-box-bg)]'
-                  }`}
-                  title={isFilteringFavorites ? "Show all map areas" : "Show only favorites on map"}
-                >
-                  <Filter size={14} />
-                  {isFilteringFavorites ? 'Filtered' : 'Filter Map'}
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      if (isTourActive && tourType === 'custom') {
+                        stopTour();
+                      } else {
+                        startTour('custom');
+                      }
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                      isTourActive && tourType === 'custom'
+                        ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white border-transparent shadow-md font-bold'
+                        : 'bg-[var(--bg-color)] text-teal-600 dark:text-teal-400 border-[var(--card-border)] hover:bg-[var(--inner-box-bg)]'
+                    }`}
+                    title="Start an automated tour of your saved locations"
+                  >
+                    <Compass size={14} />
+                    {isTourActive && tourType === 'custom' ? 'Touring' : 'Tour'}
+                  </button>
+                  <button
+                    onClick={() => setIsFilteringFavorites(!isFilteringFavorites)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                      isFilteringFavorites 
+                        ? 'bg-[var(--accent-color)] text-white border-[var(--accent-color)] shadow-md' 
+                        : 'bg-[var(--bg-color)] text-[var(--text-secondary)] border-[var(--card-border)] hover:bg-[var(--inner-box-bg)]'
+                    }`}
+                    title={isFilteringFavorites ? "Show all map areas" : "Show only favorites on map"}
+                  >
+                    <Filter size={14} />
+                    {isFilteringFavorites ? 'Filtered' : 'Filter Map'}
+                  </button>
+                </div>
               </div>
               <div className="flex flex-col gap-3">
                 {favorites.map(favId => {

@@ -152,6 +152,19 @@ html, body, header, footer, section, aside, button, input, textarea, select, can
   animation: pulse-strong 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+@keyframes spin-slow {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
 @layer utilities {
   .custom-scrollbar::-webkit-scrollbar {
     width: 4px;
